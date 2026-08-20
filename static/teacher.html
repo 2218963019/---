@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>教师端 - AI答辩助手</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--dim:#94a3b8;--accent:#a78bfa;--green:#4ade80;--red:#f87171;--yellow:#fbbf24;--blue:#38bdf8}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:960px;margin:0 auto;padding:20px}
+h1{font-size:1.8rem;font-weight:700;margin-bottom:4px}
+.subtitle{color:var(--dim);font-size:0.9rem;margin-bottom:24px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:1.1rem;margin-bottom:12px;color:var(--accent)}
+label{display:block;font-size:0.85rem;color:var(--dim);margin-bottom:4px;margin-top:10px}
+select,textarea{font-family:inherit;font-size:0.9rem;width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);outline:none}
+select:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;min-height:120px}
+.btn{display:inline-block;padding:10px 24px;border:none;border-radius:8px;cursor:pointer;font-weight:600;transition:all .2s;font-size:0.9rem}
+.btn-primary{background:var(--accent);color:#0f172a}
+.btn-primary:hover{background:#c4b5fd}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:var(--border);color:var(--text)}
+.btn-row{display:flex;gap:8px;margin-top:12px}
+.hidden{display:none!important}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.75rem;font-weight:600}
+.tag-high{background:#7f1d1d;color:var(--red)}
+.tag-mid{background:#78350f;color:var(--yellow)}
+.tag-low{background:#14532d;color:var(--green)}
+.tag-base{background:#1e3a5f;color:var(--blue)}
+.tag-tech{background:#3b1f5e;color:var(--accent)}
+.tag-imp{background:#78350f;color:var(--yellow)}
+.score-row{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:0.85rem}
+.score-row .name{width:90px;text-align:right;color:var(--dim)}
+.score-row .bar{flex:1;height:18px;background:var(--bg);border-radius:9px;overflow:hidden}
+.score-row .fill{height:100%;border-radius:9px;transition:width .5s}
+.score-row .val{width:40px;font-weight:600}
+.q-card{background:var(--bg);border-radius:8px;padding:14px;margin:10px 0;border-left:3px solid var(--accent)}
+.q-card .q-title{font-weight:600;color:var(--accent);font-size:0.95rem}
+.q-card .q-answer{color:var(--dim);font-size:0.85rem;margin-top:8px;line-height:1.6}
+.q-card .q-points{margin-top:6px;font-size:0.8rem;color:var(--green)}
+.q-card .q-meta{margin-top:6px;font-size:0.8rem;color:var(--dim)}
+.kw-tag{display:inline-block;padding:2px 10px;background:var(--bg);border:1px solid var(--border);border-radius:12px;font-size:0.8rem;margin:2px;color:var(--blue)}
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;color:var(--dim);cursor:pointer;transition:border-color .2s;margin-bottom:8px}
+.drop-zone:hover,.drop-zone.dragover{border-color:var=var(--accent)}
+.loading{text-align:center;padding:20px;color:var(--dim)}
+.loading::after{content:"";display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.nav{display:flex;gap:16px;margin-bottom:20px;font-size:0.9rem}
+.nav a{padding:6px 0;border-bottom:2px solid transparent}
+.nav a.active{color:var(--accent);border-bottom-color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>教师端 - AI答辩助手</h1>
+  <p class="subtitle">项目材料智能解析 · 评审标准匹配 · 问题集自动生成</p>
+  <div class="nav">
+    <a href="/app">学生端（答辩模拟）</a>
+    <a href="/teacher" class="active">教师端（问题集生成）</a>
+  </div>
+
+  <!-- 输入区 -->
+  <div class="card" id="inputCard">
+    <h2>项目材料输入</h2>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1">
+        <label>答辩场景</label>
+        <select id="scenario">
+          <option value="大创立项">大创立项</option>
+          <option value="竞赛路演">竞赛路演</option>
+        </select>
+      </div>
+    </div>
+    <label>上传项目材料（docx / pdf）</label>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div style="font-size:1.5rem;margin-bottom:4px">📁</div>
+      <div>点击或拖拽上传文件</div>
+      <div id="fileInfo" style="color:var(--accent);margin-top:4px;font-size:0.85rem"></div>
+      <input type="file" id="fileInput" accept=".docx,.pdf" style="display:none" onchange="handleFile(this.files[0])">
+    </div>
+    <label>或直接粘贴项目全文</label>
+    <textarea id="projectText" placeholder="粘贴项目申报书、论文或项目报告全文..."></textarea>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="analyzeBtn" onclick="doAnalyze()">智能分析</button>
+      <button class="btn btn-primary" id="genBtn" onclick="doGenerate()" style="background:var(--blue)">生成问题集</button>
+    </div>
+  </div>
+
+  <!-- 分析结果 -->
+  <div class="card hidden" id="analysisCard">
+    <h2>项目分析结果</h2>
+    <div id="analysisContent"></div>
+  </div>
+
+  <!-- 问题集 -->
+  <div class="card hidden" id="questionCard">
+    <h2>答辩问题集</h2>
+    <div id="questionContent"><div class="loading">正在生成问题集...</div></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+// 拖拽
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor = 'var(--accent)'; });
+dz.addEventListener('dragleave', () => { dz.style.borderColor = 'var(--border)'; });
+dz.addEventListener('drop', e => { e.preventDefault(); dz.style.borderColor = 'var(--border)'; if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+
+async function handleFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['docx', 'pdf'].includes(ext)) { alert('仅支持 docx 和 pdf'); return; }
+  document.getElementById('fileInfo').textContent = `上传中: ${file.name}...`;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(API + '/upload', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
+    const d = await r.json();
+    document.getElementById('projectText').value = d.text;
+    document.getElementById('fileInfo').innerHTML = `✓ ${d.filename} (${d.char_count}字)`;
+  } catch(e) {
+    document.getElementById('fileInfo').innerHTML = `<span style="color:var(--red)">✗ ${e.message}</span>`;
+  }
+}
+
+async function post(path, data) {
+  const r = await fetch(API + path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+  if (!r.ok) throw new Error((await r.json()).detail || '请求失败');
+  return r.json();
+}
+
+async function doAnalyze() {
+  const text = document.getElementById('projectText').value.trim();
+  if (!text) { alert('请先输入项目材料'); return; }
+  const scenario = document.getElementById('scenario').value;
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('analyzeBtn').textContent = '分析中...';
+  try {
+    const r = await post('/teacher/analyze', { project_text: text, scenario });
+    document.getElementById('analysisCard').classList.remove('hidden');
+    renderAnalysis(r);
+  } catch(e) {
+    alert('分析失败: ' + e.message);
+  }
+  document.getElementById('analyzeBtn').disabled = false;
+  document.getElementById('analyzeBtn').textContent = '智能分析';
+}
+
+async function doGenerate() {
+  const text = document.getElementById('projectText').value.trim();
+  if (!text) { alert('请先输入项目材料'); return; }
+  const scenario = document.getElementById('scenario').value;
+  document.getElementById('genBtn').disabled = true;
+  document.getElementById('genBtn').textContent = '生成中...';
+  document.getElementById('questionCard').classList.remove('hidden');
+  document.getElementById('questionContent').innerHTML = '<div class="loading">正在生成问题集...</div>';
+  try {
+    const r = await post('/teacher/question-set', { project_text: text, scenario, num_questions: 12 });
+    renderQuestions(r);
+  } catch(e) {
+    document.getElementById('questionContent').innerHTML = `<p style="color:var(--red)">生成失败: ${e.message}</p>`;
+  }
+  document.getElementById('genBtn').disabled = false;
+  document.getElementById('genBtn').textContent = '生成问题集';
+}
+
+function renderAnalysis(r) {
+  let html = `<div style="margin-bottom:12px"><strong>摘要：</strong>${r.summary}</div>`;
+
+  if (r.keywords_matched && r.keywords_matched.length) {
+    html += '<div style="margin-bottom:12px"><strong>匹配关键词：</strong>';
+    html += r.keywords_matched.map(k => `<span class="kw-tag">${k}</span>`).join('');
+    html += '</div>';
+  }
+
+  if (r.criteria_scores && Object.keys(r.criteria_scores).length) {
+    html += '<strong>评审维度预评估：</strong>';
+    for (const [dim, score] of Object.entries(r.criteria_scores)) {
+      const color = score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--yellow)' : 'var(--red)';
+      html += `<div class="score-row"><span class="name">${dim}</span><div class="bar"><div class="fill" style="width:${score}%;background:${color}"></div></div><span class="val" style="color:${color}">${score.toFixed(0)}</span></div>`;
+    }
+  }
+
+  document.getElementById('analysisContent').innerHTML = html;
+}
+
+function renderQuestions(r) {
+  const qs = r.questions || [];
+  let html = `<div style="margin-bottom:12px;color:var(--dim)">共 ${qs.length} 个问题</div>`;
+
+  const cats = { '基础': [], '技术': [], '改进': [] };
+  qs.forEach(q => { (cats[q.category] || cats['技术']).push(q); });
+
+  for (const [cat, items] of Object.entries(cats)) {
+    if (!items.length) continue;
+    const catClass = cat === '基础' ? 'tag-base' : cat === '技术' ? 'tag-tech' : 'tag-imp';
+    html += `<h3 style="margin:16px 0 8px"><span class="tag ${catClass}">${cat}问题</span> ${items.length}个</h3>`;
+    items.forEach((q, idx) => {
+      const diffClass = q.difficulty === '高' ? 'tag-high' : q.difficulty === '中' ? 'tag-mid' : 'tag-low';
+      html += `<div class="q-card">
+        <div class="q-title">Q${idx+1}. ${q.question}</div>
+        <div class="q-answer"><strong>参考答案：</strong>${q.reference_answer}</div>
+        ${q.scoring_points && q.scoring_points.length ? `<div class="q-points"><strong>评分要点：</strong>${q.scoring_points.join('；')}</div>` : ''}
+        <div class="q-meta"><span class="tag ${diffClass}">${q.difficulty}难度</span> ${q.source_section ? '· 来源: ' + q.source_section : ''}</div>
+      </div>`;
+    });
+  }
+
+  document.getElementById('questionContent').innerHTML = html;
+}
+</script>
+</body>
+</html>

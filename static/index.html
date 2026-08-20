@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI模拟答辩智能体</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--dim:#94a3b8;--accent:#38bdf8;--green:#4ade80;--red:#f87171;--yellow:#fbbf24;--purple:#a78bfa}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:900px;margin:0 auto;padding:20px}
+h1{font-size:1.8rem;font-weight:700;margin-bottom:4px}
+.subtitle{color:var(--dim);font-size:0.9rem;margin-bottom:24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:1.1rem;margin-bottom:12px;color:var(--accent)}
+label{display:block;font-size:0.85rem;color:var(--dim);margin-bottom:4px;margin-top:12px)}
+select,input,textarea,button{font-family:inherit;font-size:0.9rem}
+select,input[type=text]{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);outline:none}
+select:focus,input:focus{border-color:var(--accent)}
+textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);outline:none;resize:vertical;min-height:120px}
+textarea:focus{border-color:var(--accent)}
+.btn{display:inline-block;padding:10px 24px;border:none;border-radius:8px;cursor:pointer;font-weight:600;transition:all .2s}
+.btn-primary{background:var(--accent);color:#0f172a}
+.btn-primary:hover{background:#7dd3fc}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:var(--border);color:var(--text)}
+.btn-secondary:hover{background:#475569}
+.btn-danger{background:var(--red);color:#fff}
+.btn-row{display:flex;gap:8px;margin-top:12px}
+.chat{display:flex;flex-direction:column;gap:12px;max-height:500px;overflow-y:auto;padding:4px}
+.msg{padding:12px 16px;border-radius:12px;max-width:85%;word-break:break-word;line-height:1.6;font-size:0.9rem}
+.msg-judge{background:#1e3a5f;align-self:flex-start;border-bottom-left-radius:4px}
+.msg-student{background:#1a3d2e;align-self:flex-end;border-bottom-right-radius:4px}
+.msg-system{background:var(--border);align-self:center;text-align:center;font-size:0.8rem;color:var(--dim);border-radius:20px;padding:6px 16px}
+.msg-label{font-size:0.75rem;font-weight:600;margin-bottom:4px;display:block}
+.msg-judge .msg-label{color:var(--accent)}
+.msg-student .msg-label{color:var(--green)}
+.radar-container{display:flex;justify-content:center;margin:12px 0}
+.score-bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:0.85rem}
+.score-bar .name{width:80px;text-align:right;color:var(--dim)}
+.score-bar .bar{flex:1;height:20px;background:var(--bg);border-radius:10px;overflow:hidden;position:relative}
+.score-bar .fill{height:100%;border-radius:10px;transition:width .5s}
+.score-bar .val{width:50px;font-weight:600}
+.improvement{padding:10px;background:var(--bg);border-radius:8px;margin:8px 0;border-left:3px solid var(--yellow)}
+.improvement .dim{font-weight:600;color:var(--yellow)}
+.improvement .action{color:var(--dim);font-size:0.85rem;margin-top:4px}
+.qa-item{padding:10px;background:var(--bg);border-radius:8px;margin:8px 0}
+.qa-item .q{font-weight:600;color:var(--accent)}
+.qa-item .a{color:var(--dim);font-size:0.85rem;margin-top:4px}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.75rem;font-weight:600}
+.tag-high{background:#7f1d1d;color:var(--red)}
+.tag-mid{background:#78350f;color:var(--yellow)}
+.tag-low{background:#14532d;color:var(--green)}
+.status{display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--dim);margin-bottom:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.dot.idle{background:var(--dim)}
+.dot.active{background:var(--accent);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.hidden{display:none!important}
+.loading{text-align:center;padding:20px;color:var(--dim)}
+.loading::after{content:"";display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>AI模拟答辩智能体</h1>
+  <p class="subtitle">基于大语言模型与RAG的答辩模拟系统 — 大创立项 / 竞赛路演</p>
+  <div style="display:flex;gap:16px;margin-bottom:20px;font-size:0.9rem">
+    <a href="/app" style="color:var(--accent);border-bottom:2px solid var(--accent);padding-bottom:4px;text-decoration:none">学生端（答辩模拟）</a>
+    <a href="/teacher" style="color:var(--dim);padding-bottom:4px;text-decoration:none">教师端（问题集生成）</a>
+  </div>
+
+  <!-- 配置区 -->
+  <div class="card" id="configCard">
+    <h2>答辩配置</h2>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1">
+        <label>评委风格</label>
+        <select id="persona">
+          <option value="strict_tech">严厉技术型</option>
+          <option value="practical">务实应用型</option>
+          <option value="strategic">战略宏观型</option>
+          <option value="encouraging">鼓励引导型</option>
+          <option value="mixed">混合随机型</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label>答辩场景</label>
+        <select id="scenario">
+          <option value="大创立项">大创立项</option>
+          <option value="竞赛路演">竞赛路演</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label>提问轮数</label>
+        <select id="maxTurns">
+          <option value="3">3轮（快速）</option>
+          <option value="5" selected>5轮（标准）</option>
+          <option value="8">8轮（深度）</option>
+        </select>
+      </div>
+    </div>
+    <label>项目材料（粘贴文本 或 拖拽上传docx/pdf）</label>
+    <div id="dropZone" style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;color:var(--dim);margin-bottom:8px;cursor:pointer;transition:border-color .2s" onclick="document.getElementById('fileInput').click()">
+      <div style="font-size:1.5rem;margin-bottom:4px">📄</div>
+      <div>点击或拖拽上传 docx / pdf 文件</div>
+      <div id="fileInfo" style="color:var(--accent);margin-top:4px;font-size:0.85rem"></div>
+      <input type="file" id="fileInput" accept=".docx,.pdf" style="display:none" onchange="handleFile(this.files[0])">
+    </div>
+    <textarea id="projectText" placeholder="也可以直接粘贴项目申报书、论文或项目报告的全文内容..."></textarea>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="startBtn" onclick="startDefense()">开始答辩</button>
+    </div>
+  </div>
+
+  <!-- 答辩区 -->
+  <div class="card hidden" id="chatCard">
+    <h2>答辩进行中</h2>
+    <div class="status">
+      <span class="dot active" id="statusDot"></span>
+      <span id="statusText">等待评委提问...</span>
+      <span id="turnInfo" style="margin-left:auto;font-size:0.8rem;color:var(--dim)"></span>
+    </div>
+    <div class="chat" id="chatBox"></div>
+    <div class="btn-row" id="answerRow" style="display:none">
+      <textarea id="answerInput" placeholder="输入回答 或 点击麦克风语音输入..." style="min-height:80px;flex:1"></textarea>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn btn-primary" onclick="submitAnswer()" id="answerBtn">提交回答</button>
+        <button class="btn btn-secondary" onclick="toggleVoice()" id="voiceBtn" style="font-size:0.8rem;padding:6px 12px">🎤 语音输入</button>
+        <button class="btn btn-danger" onclick="endDefense()" id="endBtn" style="font-size:0.8rem;padding:6px 12px">结束答辩</button>
+      </div>
+    </div>
+    <div id="voiceStatus" class="hidden" style="text-align:center;padding:8px;margin-top:8px;background:#1e3a5f;border-radius:8px;color:var(--accent);font-size:0.85rem">
+      🎙️ 正在聆听... 请说话
+    </div>
+    <div style="margin-top:8px;font-size:0.8rem;color:var(--dim)">
+      <label style="display:inline;font-size:0.8rem"><input type="checkbox" id="ttsToggle" checked onchange="toggleTTS()"> 评委语音播报</label>
+    </div>
+  </div>
+
+  <!-- 结果区 -->
+  <div class="card hidden" id="resultCard">
+    <h2>评审结果</h2>
+    <div id="scoreSection"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="generateReport()">生成改进报告</button>
+      <button class="btn btn-secondary" onclick="resetAll()">重新开始</button>
+    </div>
+  </div>
+
+  <!-- 报告区 -->
+  <div class="card hidden" id="reportCard">
+    <h2>答辩改进报告</h2>
+    <div id="reportContent"><div class="loading">正在生成报告...</div></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let sessionId = '';
+let turnCount = 0;
+let maxT = 5;
+
+// ========== 语音功能 ==========
+let recognition = null;
+let isRecording = false;
+let ttsEnabled = true;
+
+// 语音识别（STT）
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SpeechRec) {
+  recognition = new SpeechRec();
+  recognition.lang = 'zh-CN';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onresult = function(event) {
+    let finalText = '';
+    let interimText = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        finalText += event.results[i][0].transcript;
+      } else {
+        interimText += event.results[i][0].transcript;
+      }
+    }
+    const input = document.getElementById('answerInput');
+    if (finalText) {
+      input.value += finalText;
+    }
+    if (interimText) {
+      document.getElementById('voiceStatus').innerHTML = '🎙️ 正在聆听... <span style="color:var(--green)">' + interimText + '</span>';
+    }
+  };
+  recognition.onerror = function(event) {
+    document.getElementById('voiceStatus').innerHTML = '<span style="color:var(--red)">语音识别错误: ' + event.error + '</span>';
+    stopVoice();
+  };
+  recognition.onend = function() {
+    if (isRecording) {
+      try { recognition.start(); } catch(e) {}
+    }
+  };
+}
+
+function toggleVoice() {
+  if (!recognition) {
+    alert('浏览器不支持语音识别，请使用Chrome或Edge浏览器');
+    return;
+  }
+  if (isRecording) {
+    stopVoice();
+  } else {
+    startVoice();
+  }
+}
+
+function startVoice() {
+  isRecording = true;
+  document.getElementById('voiceBtn').textContent = '⏹️ 停止录音';
+  document.getElementById('voiceBtn').style.background = 'var(--red)';
+  document.getElementById('voiceBtn').style.color = '#fff';
+  document.getElementById('voiceStatus').classList.remove('hidden');
+  document.getElementById('voiceStatus').textContent = '🎙️ 正在聆听... 请说话';
+  try {
+    recognition.start();
+  } catch(e) {}
+}
+
+function stopVoice() {
+  isRecording = false;
+  document.getElementById('voiceBtn').textContent = '🎤 语音输入';
+  document.getElementById('voiceBtn').style.background = 'var(--border)';
+  document.getElementById('voiceBtn').style.color = 'var(--text)';
+  document.getElementById('voiceStatus').classList.add('hidden');
+  try { recognition.stop(); } catch(e) {}
+}
+
+// 语音播报（TTS）
+function speak(text) {
+  if (!ttsEnabled || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const cleanText = text.replace(/[*#`_]/g, '').replace(/\n/g, ' ').slice(0, 500);
+  const utter = new SpeechSynthesisUtterance(cleanText);
+  utter.lang = 'zh-CN';
+  utter.rate = 1.0;
+  utter.pitch = 1.0;
+  const voices = window.speechSynthesis.getVoices();
+  const zhVoice = voices.find(v => v.lang.startsWith('zh'));
+  if (zhVoice) utter.voice = zhVoice;
+  window.speechSynthesis.speak(utter);
+}
+
+function toggleTTS() {
+  ttsEnabled = document.getElementById('ttsToggle').checked;
+  if (!ttsEnabled) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+// 拖拽上传
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; });
+dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.style.borderColor = 'var(--border)';
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+async function handleFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['docx', 'pdf'].includes(ext)) { alert('仅支持 docx 和 pdf 文件'); return; }
+
+  document.getElementById('fileInfo').textContent = `上传中: ${file.name}...`;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch(API + '/upload', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    document.getElementById('projectText').value = data.text;
+    document.getElementById('fileInfo').innerHTML = `✓ ${data.filename} (${data.char_count}字)`;
+  } catch(e) {
+    document.getElementById('fileInfo').innerHTML = `<span style="color:var(--red)">✗ ${e.message}</span>`;
+  }
+}
+
+async function api(path, data) {
+  const resp = await fetch(API + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (!resp.ok) throw new Error((await resp.json()).detail || '请求失败');
+  return resp.json();
+}
+
+function addMsg(type, text) {
+  const box = document.getElementById('chatBox');
+  const div = document.createElement('div');
+  div.className = 'msg msg-' + type;
+  const label = type === 'judge' ? '评委' : type === 'student' ? '学生' : '系统';
+  div.innerHTML = `<span class="msg-label">${label}</span>${text}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function showLoading(text) {
+  document.getElementById('statusText').textContent = text;
+  document.getElementById('statusDot').className = 'dot active';
+}
+
+function hideLoading() {
+  document.getElementById('statusDot').className = 'dot idle';
+  document.getElementById('statusText').textContent = '等待你的回答';
+}
+
+async function startDefense() {
+  const persona = document.getElementById('persona').value;
+  const scenario = document.getElementById('scenario').value;
+  const projectText = document.getElementById('projectText').value.trim();
+  const maxTurns = parseInt(document.getElementById('maxTurns').value);
+  if (!projectText) { alert('请先输入项目材料'); return; }
+
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('startBtn').textContent = '启动中...';
+  showLoading('评委正在审阅材料...');
+
+  try {
+    const res = await api('/start', { persona, scenario, project_text: projectText, max_turns: maxTurns });
+    sessionId = res.session_id;
+    turnCount = 1;
+    maxT = maxTurns;
+
+    document.getElementById('configCard').classList.add('hidden');
+    document.getElementById('chatCard').classList.remove('hidden');
+    addMsg('system', `答辩开始 — ${res.persona} · ${res.scenario} · 共${maxTurns}轮`);
+    addMsg('judge', res.question);
+    speak(res.question);
+    updateTurnInfo();
+    hideLoading();
+    document.getElementById('answerRow').style.display = 'flex';
+  } catch(e) {
+    alert('启动失败: ' + e.message);
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startBtn').textContent = '开始答辩';
+  }
+}
+
+function updateTurnInfo() {
+  document.getElementById('turnInfo').textContent = `第${turnCount}/${maxT}轮`;
+}
+
+async function endDefense() {
+  if (!confirm('确定结束答辩？将直接进入评审环节。')) return;
+  addMsg('system', '学生主动结束答辩');
+  await doEvaluate();
+}
+
+async function submitAnswer() {
+  const answer = document.getElementById('answerInput').value.trim();
+  if (!answer) return;
+
+  if (isRecording) stopVoice();
+  document.getElementById('answerBtn').disabled = true;
+  addMsg('student', answer);
+  document.getElementById('answerInput').value = '';
+  showLoading('评委正在思考...');
+
+  try {
+    const res = await api('/answer', { session_id: sessionId, answer });
+    if (res.type === 'followup') {
+      addMsg('judge', res.question);
+      speak(res.question);
+      hideLoading();
+    } else if (res.type === 'new_question') {
+      turnCount++;
+      addMsg('system', `—— 第${turnCount}轮 ——`);
+      addMsg('judge', res.question);
+      speak(res.question);
+      updateTurnInfo();
+      hideLoading();
+    } else if (res.type === 'finished') {
+      addMsg('system', '答辩结束');
+      await doEvaluate();
+    }
+  } catch(e) {
+    alert('提交失败: ' + e.message);
+  }
+  document.getElementById('answerBtn').disabled = false;
+}
+
+async function doEvaluate() {
+  showLoading('评委正在评审...');
+  document.getElementById('answerRow').style.display = 'none';
+  try {
+    const res = await api('/evaluate', { session_id: sessionId });
+    const ev = res.evaluation;
+    document.getElementById('chatCard').classList.add('hidden');
+    document.getElementById('resultCard').classList.remove('hidden');
+    renderScores(ev);
+  } catch(e) {
+    alert('评审失败: ' + e.message);
+  }
+}
+
+function renderScores(ev) {
+  const sec = document.getElementById('scoreSection');
+  const total = ev.总分;
+  const totalColor = total >= 80 ? 'var(--green)' : total >= 60 ? 'var(--yellow)' : 'var(--red)';
+  let html = `<div style="text-align:center;margin-bottom:16px">
+    <div style="font-size:2.5rem;font-weight:700;color:${totalColor}">${total.toFixed(1)}</div>
+    <div style="color:var(--dim);font-size:0.85rem">总分 / 100</div>
+  </div>`;
+
+  const dims = ev.各维度评分 || [];
+  dims.forEach(d => {
+    const pct = d.分数;
+    const color = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
+    html += `<div class="score-bar">
+      <span class="name">${d.维度}</span>
+      <div class="bar"><div class="fill" style="width:${pct}%;background:${color}"></div></div>
+      <span class="val" style="color:${color}">${pct.toFixed(0)}</span>
+    </div>`;
+  });
+
+  if (ev.优势 && ev.优势.length) {
+    html += `<div style="margin-top:12px"><strong style="color:var(--green)">优势：</strong>${ev.优势.join('；')}</div>`;
+  }
+  if (ev.不足 && ev.不足.length) {
+    html += `<div style="margin-top:6px"><strong style="color:var(--red)">不足：</strong>${ev.不足.join('；')}</div>`;
+  }
+  sec.innerHTML = html;
+}
+
+async function generateReport() {
+  document.getElementById('reportCard').classList.remove('hidden');
+  document.getElementById('reportContent').innerHTML = '<div class="loading">正在生成报告...</div>';
+  try {
+    const res = await api('/report', { session_id: sessionId });
+    renderReport(res);
+  } catch(e) {
+    document.getElementById('reportContent').innerHTML = `<p style="color:var(--red)">报告生成失败: ${e.message}</p>`;
+  }
+}
+
+function renderReport(r) {
+  let html = '';
+
+  if (r.改进建议 && r.改进建议.length) {
+    html += '<h3 style="color:var(--yellow);margin:12px 0 8px">改进建议</h3>';
+    r.改进建议.forEach(i => {
+      const cls = i.优先级 === '高' ? 'tag-high' : i.优先级 === '中' ? 'tag-mid' : 'tag-low';
+      html += `<div class="improvement">
+        <span class="dim">${i.维度}</span> <span class="tag ${cls}">${i.优先级}优先</span>
+        <span style="color:var(--dim);font-size:0.8rem;margin-left:8px">${i.当前}→${i.目标}</span>
+        <div class="action">差距: ${i.差距}</div>
+        <div class="action">行动: ${i.行动}</div>
+      </div>`;
+    });
+  }
+
+  if (r.QA问题集 && r.QA问题集.length) {
+    html += '<h3 style="color:var(--accent);margin:16px 0 8px">Q&A问题集</h3>';
+    r.QA问题集.forEach((q, idx) => {
+      const diffCls = q.难度 === '高' ? 'tag-high' : q.难度 === '中' ? 'tag-mid' : 'tag-low';
+      html += `<div class="qa-item">
+        <div class="q">Q${idx+1}. ${q.问题}</div>
+        <span class="tag ${diffCls}">${q.难度}</span>
+        <span class="tag tag-mid" style="margin-left:4px">${q.类别}</span>
+        <div class="a"><strong>参考答案：</strong>${q.参考答案}</div>
+      </div>`;
+    });
+  }
+
+  if (r.总结) {
+    html += `<div style="margin-top:16px;padding:12px;background:var(--bg);border-radius:8px;border-left:3px solid var(--purple)">
+      <strong style="color:var(--purple)">总结</strong><br>${r.总结}
+    </div>`;
+  }
+
+  document.getElementById('reportContent').innerHTML = html;
+}
+
+function resetAll() {
+  sessionId = '';
+  turnCount = 0;
+  maxT = 5;
+  document.getElementById('configCard').classList.remove('hidden');
+  document.getElementById('chatCard').classList.add('hidden');
+  document.getElementById('resultCard').classList.add('hidden');
+  document.getElementById('reportCard').classList.add('hidden');
+  document.getElementById('chatBox').innerHTML = '';
+  document.getElementById('answerInput').value = '';
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('startBtn').textContent = '开始答辩';
+}
+</script>
+</body>
+</html>
