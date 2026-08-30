@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from skills.llm_client import LLMClient, ConversationHistory
 from skills.rag_engine import RAGEngine
+from skills.question_planner import QuestionPlanner
 
 
 # ============================================================
@@ -209,6 +210,7 @@ class DefenseSession:
     project_summary: str = ""
     created_at: str = ""
     finished_at: str = ""
+    question_plan: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -227,6 +229,7 @@ class DefenseSession:
                 for t in self.turns
             ],
             "evaluation": self.evaluation.to_dict() if self.evaluation else None,
+            "question_plan": self.question_plan,
         }
 
 
@@ -293,6 +296,7 @@ class JudgeEngine:
         self.max_followups = max_followups
         self.max_turns = max_turns
         self._sessions: dict = {}
+        self.planner = QuestionPlanner(llm_client)
 
     def start_session(
         self,
@@ -336,19 +340,38 @@ class JudgeEngine:
 
     def ask_first_question(self, session: DefenseSession) -> str:
         """
-        评委提出第一个问题。
-
-        Args:
-            session: 答辩会话
-
-        Returns:
-            第一个问题
+        评委提出第一个问题。先生成提问大纲，再按大纲第1轮目标提问。
         """
         context = self._get_context("项目概述 创新点 技术路线", top_k=5)
         if not context and session.project_summary:
             context = session.project_summary
 
-        prompt = self.FIRST_QUESTION_PROMPT.format(context=context or "暂无项目材料")
+        # 生成提问大纲
+        try:
+            session.question_plan = self.planner.generate_plan(
+                project_summary=context or session.project_summary,
+                persona_style=session.persona.style,
+                question_focus=session.persona.question_focus,
+                scenario=session.scenario,
+                num_turns=self.max_turns,
+            )
+        except Exception:
+            session.question_plan = []
+
+        guidance = self.planner.get_round_guidance(session.question_plan, 1)
+
+        prompt = (
+            f"这是你的第一个问题。提问大纲第1轮指导：\n"
+            f"- 主题：{guidance['topic']}\n"
+            f"- 考察目标：{guidance['goal']}\n\n"
+            f"基于以下项目材料，提出你的第一个答辩问题。\n"
+            f"要求：\n"
+            f"- 问题要体现你的评审风格，聚焦上述主题\n"
+            f"- 只问一个问题，要深入具体\n"
+            f"- 不要问'请介绍一下项目'这类泛泛的问题\n\n"
+            f"项目材料：\n{context or '暂无项目材料'}\n\n"
+            f"请直接提出你的问题："
+        )
 
         messages = [
             {"role": "system", "content": session.persona.system_prompt},
@@ -435,41 +458,49 @@ class JudgeEngine:
     def next_question(self, session: DefenseSession) -> Optional[str]:
         """
         评委提出下一个新问题（非追问）。
-
-        Args:
-            session: 答辩会话
-
-        Returns:
-            新问题（None表示答辩结束）
+        按提问大纲当前轮次指导，并以多轮对话历史确保连贯性。
         """
         if len(session.turns) >= self.max_turns:
             return None
 
-        asked = []
+        round_num = len(session.turns) + 1
+        guidance = self.planner.get_round_guidance(session.question_plan, round_num)
+
+        context = self._get_context(guidance["topic"] or "答辩考察重点", top_k=5)
+
+        # 构建多轮对话历史，让LLM以上下文方式理解连贯性
+        messages = [{"role": "system", "content": session.persona.system_prompt}]
+
         for t in session.turns:
-            asked.append(f"Q: {t.question}")
+            messages.append({"role": "assistant", "content": t.question})
             if t.answer:
-                asked.append(f"A: {t.answer}")
+                messages.append({"role": "user", "content": t.answer})
+            for i, fq in enumerate(t.followup_questions):
+                messages.append({"role": "assistant", "content": fq})
+                if i < len(t.followup_answers):
+                    messages.append({"role": "user", "content": t.followup_answers[i]})
 
-        context = self._get_context("答辩考察重点", top_k=5)
-
+        # 当前轮次的提问指令
+        prev_summary = "、".join(guidance["prev_topics"]) if guidance["prev_topics"] else "无"
         prompt = (
-            f"以下是已有的答辩记录：\n{chr(10).join(asked)}\n\n"
-            f"项目材料：\n{context or session.project_summary or '暂无材料'}\n\n"
-            f"请提出一个全新的问题，不要重复已问过的内容。\n"
-            f"关注重点：{session.persona.question_focus}\n"
-            f"只问一个问题，直接输出问题："
+            f"现在进入第{round_num}轮提问。提问大纲指导：\n"
+            f"- 本轮主题：{guidance['topic']}\n"
+            f"- 考察目标：{guidance['goal']}\n"
+            f"- 与前序的衔接：{guidance['link']}\n"
+            f"- 已考察主题：{prev_summary}\n\n"
+            f"项目材料供参考：\n{context or session.project_summary or '暂无材料'}\n\n"
+            f"请基于以上答辩上下文，提出第{round_num}轮的新问题。\n"
+            f"要求：\n"
+            f"- 紧扣本轮主题，承接前面的问答逻辑自然递进\n"
+            f"- 不要重复已问过的内容\n"
+            f"- 只问一个问题，直接输出问题："
         )
-
-        messages = [
-            {"role": "system", "content": session.persona.system_prompt},
-            {"role": "user", "content": prompt},
-        ]
+        messages.append({"role": "user", "content": prompt})
 
         resp = self.llm.chat(messages)
         question = resp.content.strip()
 
-        turn = DefenseTurn(turn_id=len(session.turns) + 1, question=question)
+        turn = DefenseTurn(turn_id=round_num, question=question)
         session.turns.append(turn)
         return question
 

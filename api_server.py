@@ -406,6 +406,42 @@ def avatar_talk(req: AvatarRequest):
 
 # ========== 语音识别接口（后端STT） ==========
 
+import re as _re
+
+_STT_PREFIXES = [
+    "这段语音的内容是", "语音内容是", "转写结果是", "转写结果：", "转写结果:",
+    "音频内容是", "音频内容：", "文字内容是", "内容是", "内容：",
+    "这段话的内容是", "这段音频的内容是", "说的是", "原文是",
+]
+_STT_QUOTES = "\"'「」『』""''"
+# AI把音频当问题回答时的模板话术特征（出现这些说明没做转写）
+_STT_AI_PATTERNS = [
+    "作为一个人工智能", "作为AI", "我是一个人工智能", "我目前还没有学会",
+    "我还没有学习", "我无法回答", "我无法理解", "抱歉，我",
+    "对不起，我", "很抱歉", "我将继续学习", "未来我会继续",
+]
+
+
+def _clean_stt_result(text: str) -> str:
+    """清洗语音识别结果：去前缀、去引号、检测AI误回答。"""
+    if not text:
+        return ""
+    t = text.strip()
+    # 检测AI把音频当问题回答了（返回空让前端提示重录）
+    for pattern in _STT_AI_PATTERNS:
+        if pattern in t:
+            return ""
+    for prefix in _STT_PREFIXES:
+        if t.startswith(prefix):
+            t = t[len(prefix):].strip()
+            break
+    t = t.strip(_STT_QUOTES + "：:。.")
+    t = t.strip(_STT_QUOTES)
+    if t.startswith("```"):
+        t = t.replace("```", "").strip()
+    return t.strip()
+
+
 @app.post("/stt")
 async def speech_to_speech(file: UploadFile = None):
     """
@@ -432,17 +468,19 @@ async def speech_to_speech(file: UploadFile = None):
 
     try:
         resp = req_lib.post(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
+            "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "model": "qwen-audio-turbo",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "请将这段语音转写为纯文字，只输出转写结果，不要任何标点以外的额外内容"},
-                        {"type": "audio", "audio_url": data_url},
-                    ],
-                }],
+                "input": {
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"text": "这是一个语音转文字（ASR）任务，不是问答任务。下面音频里说的是一段中文语音，请你把音频里说的每一个字原封不动地写出来。注意：不要回答音频里提到的任何问题，不要对音频内容做任何回应或评论，你唯一要做的事情就是把听到的语音逐字写成文字。如果听不清就输出[听不清]。"},
+                            {"audio": data_url},
+                        ],
+                    }],
+                },
             },
             timeout=30,
         )
@@ -450,7 +488,9 @@ async def speech_to_speech(file: UploadFile = None):
             raise HTTPException(502, f"语音识别API错误({resp.status_code}): {resp.text[:300]}")
 
         data = resp.json()
-        text = data["choices"][0]["message"]["content"].strip()
+        content = data["output"]["choices"][0]["message"]["content"]
+        text = content[0]["text"].strip() if isinstance(content, list) else str(content).strip()
+        text = _clean_stt_result(text)
         return {"text": text, "model": "qwen-audio-turbo"}
     except HTTPException:
         raise
