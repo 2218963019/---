@@ -100,6 +100,14 @@ textarea:focus{border-color:var(--accent)}
           <option value="8">8轮（深度）</option>
         </select>
       </div>
+      <div style="flex:1">
+        <label>每轮限时</label>
+        <select id="timeLimit">
+          <option value="120">2分钟</option>
+          <option value="180" selected>3分钟</option>
+          <option value="300">5分钟</option>
+        </select>
+      </div>
     </div>
     <label>项目材料（粘贴文本 或 拖拽上传docx/pdf）</label>
     <div id="dropZone" style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;color:var(--dim);margin-bottom:8px;cursor:pointer;transition:border-color .2s" onclick="document.getElementById('fileInput').click()">
@@ -120,6 +128,7 @@ textarea:focus{border-color:var(--accent)}
     <div class="status">
       <span class="dot active" id="statusDot"></span>
       <span id="statusText">等待评委提问...</span>
+      <span id="timerDisplay" style="margin-left:12px;color:var(--green);font-weight:600;display:none">⏱ 03:00</span>
       <span id="turnInfo" style="margin-left:auto;font-size:0.8rem;color:var(--dim)"></span>
     </div>
     <div class="chat" id="chatBox"></div>
@@ -145,14 +154,25 @@ textarea:focus{border-color:var(--accent)}
     <div id="scoreSection"></div>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="generateReport()">生成改进报告</button>
+      <button class="btn btn-secondary" onclick="polishAnswers()">✨ 答辩话术润色</button>
+      <button class="btn btn-secondary" onclick="exportPDF()">📄 导出PDF</button>
       <button class="btn btn-secondary" onclick="resetAll()">重新开始</button>
     </div>
+  </div>
+
+  <!-- 润色区 -->
+  <div class="card hidden" id="polishCard">
+    <h2>✨ 答辩话术润色</h2>
+    <div id="polishContent"><div class="loading">正在润色答辩话术...</div></div>
   </div>
 
   <!-- 报告区 -->
   <div class="card hidden" id="reportCard">
     <h2>答辩改进报告</h2>
     <div id="reportContent"><div class="loading">正在生成报告...</div></div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-secondary" onclick="exportPDF()">📄 导出PDF</button>
+    </div>
   </div>
 </div>
 
@@ -161,6 +181,9 @@ const API = '';
 let sessionId = '';
 let turnCount = 0;
 let maxT = 5;
+let timeLimit = 180;
+let timerInterval = null;
+let timerSeconds = 0;
 
 // ========== 语音功能 ==========
 let recognition = null;
@@ -326,6 +349,7 @@ async function startDefense() {
   const scenario = document.getElementById('scenario').value;
   const projectText = document.getElementById('projectText').value.trim();
   const maxTurns = parseInt(document.getElementById('maxTurns').value);
+  const timeLimitSel = parseInt(document.getElementById('timeLimit').value);
   if (!projectText) { alert('请先输入项目材料'); return; }
 
   document.getElementById('startBtn').disabled = true;
@@ -337,6 +361,7 @@ async function startDefense() {
     sessionId = res.session_id;
     turnCount = 1;
     maxT = maxTurns;
+    timeLimit = timeLimitSel;
 
     document.getElementById('configCard').classList.add('hidden');
     document.getElementById('chatCard').classList.remove('hidden');
@@ -345,6 +370,7 @@ async function startDefense() {
     speak(res.question);
     updateTurnInfo();
     hideLoading();
+    startTimer();
     document.getElementById('answerRow').style.display = 'flex';
   } catch(e) {
     alert('启动失败: ' + e.message);
@@ -369,6 +395,7 @@ async function submitAnswer() {
 
   if (isRecording) stopVoice();
   document.getElementById('answerBtn').disabled = true;
+  stopTimer();
   addMsg('student', answer);
   document.getElementById('answerInput').value = '';
   showLoading('评委正在思考...');
@@ -379,6 +406,7 @@ async function submitAnswer() {
       addMsg('judge', res.question);
       speak(res.question);
       hideLoading();
+      startTimer();
     } else if (res.type === 'new_question') {
       turnCount++;
       addMsg('system', `—— 第${turnCount}轮 ——`);
@@ -386,6 +414,7 @@ async function submitAnswer() {
       speak(res.question);
       updateTurnInfo();
       hideLoading();
+      startTimer();
     } else if (res.type === 'finished') {
       addMsg('system', '答辩结束');
       await doEvaluate();
@@ -492,14 +521,114 @@ function resetAll() {
   sessionId = '';
   turnCount = 0;
   maxT = 5;
+  stopTimer();
   document.getElementById('configCard').classList.remove('hidden');
   document.getElementById('chatCard').classList.add('hidden');
   document.getElementById('resultCard').classList.add('hidden');
   document.getElementById('reportCard').classList.add('hidden');
+  document.getElementById('polishCard').classList.add('hidden');
   document.getElementById('chatBox').innerHTML = '';
   document.getElementById('answerInput').value = '';
   document.getElementById('startBtn').disabled = false;
   document.getElementById('startBtn').textContent = '开始答辩';
+}
+
+// ========== 计时器 ==========
+function startTimer() {
+  stopTimer();
+  timerSeconds = timeLimit;
+  const disp = document.getElementById('timerDisplay');
+  disp.style.display = 'inline';
+  updateTimerDisplay();
+  timerInterval = setInterval(() => {
+    timerSeconds--;
+    updateTimerDisplay();
+    if (timerSeconds <= 0) {
+      stopTimer();
+      alert('⏰ 时间到！请尽快提交回答。');
+    } else if (timerSeconds === 30) {
+      document.getElementById('timerDisplay').style.color = 'var(--yellow)';
+    } else if (timerSeconds === 10) {
+      document.getElementById('timerDisplay').style.color = 'var(--red)';
+    }
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  document.getElementById('timerDisplay').style.display = 'none';
+  document.getElementById('timerDisplay').style.color = 'var(--green)';
+}
+function updateTimerDisplay() {
+  const m = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
+  const s = (timerSeconds % 60).toString().padStart(2, '0');
+  document.getElementById('timerDisplay').textContent = `⏱ ${m}:${s}`;
+}
+
+// ========== 答辩话术润色 ==========
+async function polishAnswers() {
+  document.getElementById('polishCard').classList.remove('hidden');
+  document.getElementById('polishContent').innerHTML = '<div class="loading">正在润色答辩话术...</div>';
+  document.getElementById('polishCard').scrollIntoView({behavior:'smooth'});
+  try {
+    const res = await api('/polish', { session_id: sessionId });
+    let html = '';
+    res.results.forEach(r => {
+      html += `<div style="margin-bottom:16px;padding:12px;background:var(--bg);border-radius:8px">
+        <div style="font-weight:600;color:var(--accent);margin-bottom:8px">第${r.round}轮</div>
+        <div style="color:var(--dim);font-size:0.85rem;margin-bottom:8px">📌 评委问题：${r.question}</div>
+        <div style="margin-bottom:8px"><span style="color:var(--red);font-size:0.8rem">原始回答：</span><br><span style="color:var(--dim)">${r.original}</span></div>
+        <div><span style="color:var(--green);font-size:0.8rem">✨ 润色后：</span><br><span style="color:var(--text)">${r.polished}</span></div>`;
+      if (r.followups) {
+        r.followups.forEach(fq => {
+          html += `<div style="margin-top:12px;padding-top:8px;border-top:1px dashed var(--border)">
+            <div style="color:var(--dim);font-size:0.85rem;margin-bottom:4px">📌 追问：${fq.question}</div>
+            <div style="margin-bottom:4px"><span style="color:var(--red);font-size:0.8rem">原始：</span> <span style="color:var(--dim)">${fq.original}</span></div>
+            <div><span style="color:var(--green);font-size:0.8rem">✨ 润色：</span> <span style="color:var(--text)">${fq.polished}</span></div>
+          </div>`;
+        });
+      }
+      html += '</div>';
+    });
+    document.getElementById('polishContent').innerHTML = html || '<p style="color:var(--dim)">暂无可润色的回答</p>';
+  } catch(e) {
+    document.getElementById('polishContent').innerHTML = `<p style="color:var(--red)">润色失败: ${e.message}</p>`;
+  }
+}
+
+// ========== 导出PDF ==========
+async function exportPDF() {
+  const w = window.open('', '_blank');
+  if (!w) { alert('请允许弹出窗口以导出PDF'); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>答辩报告</title>
+  <style>body{font-family:sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+  h1{color:#1e3a5f}h2{color:#38bdf8;border-bottom:2px solid #38bdf8;padding-bottom:4px}
+  .qa{margin:12px 0;padding:10px;background:#f5f5f5;border-radius:8px}
+  .score{display:flex;gap:20px;margin:10px 0}.score-item{text-align:center}
+  table{width:100%;border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px;text-align:left}
+  </style></head><body><h1>AI模拟答辩报告</h1><p>生成时间: ${new Date().toLocaleString()}</p>`);
+  try {
+    const sess = await fetch(`/session/${sessionId}`).then(r => r.json());
+    w.document.write('<h2>答辩记录</h2>');
+    sess.turns.forEach(t => {
+      w.document.write(`<div class="qa"><strong>第${t.轮次}轮 评委：</strong>${t.问题}<br><strong>学生：</strong>${t.回答}</div>`);
+      t.追问.forEach((fq, i) => {
+        w.document.write(`<div class="qa"><strong>追问：</strong>${fq}<br><strong>回答：</strong>${t.追问回答[i]||''}</div>`);
+      });
+    });
+    if (sess.evaluation) {
+      const ev = sess.evaluation;
+      w.document.write(`<h2>评审结果</h2><p style="font-size:1.5rem;font-weight:bold">总分: ${ev.总分.toFixed(1)}/100</p>`);
+      w.document.write('<table><tr><th>维度</th><th>分数</th></tr>');
+      ev.各维度评分.forEach(s => w.document.write(`<tr><td>${s.维度}</td><td>${s.分数.toFixed(1)}</td></tr>`));
+      w.document.write('</table>');
+      if (ev.优势) w.document.write(`<p><strong>优势：</strong>${ev.优势.join('；')}</p>`);
+      if (ev.不足) w.document.write(`<p><strong>不足：</strong>${ev.不足.join('；')}</p>`);
+      if (ev.改进建议) w.document.write(`<p><strong>改进建议：</strong><br>${ev.改进建议.map((s,i)=>`${i+1}. ${s}`).join('<br>')}</p>`);
+    }
+  } catch(e) { w.document.write(`<p>加载失败: ${e.message}</p>`); }
+  w.document.write('</body></html>');
+  w.document.close();
+  setTimeout(() => w.print(), 500);
 }
 </script>
 </body>

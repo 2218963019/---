@@ -498,3 +498,68 @@ async def speech_to_speech(file: UploadFile = None):
         raise HTTPException(500, f"语音识别响应格式异常: {resp.text[:300]}")
     except Exception as e:
         raise HTTPException(500, f"语音识别失败: {str(e)}")
+
+
+# ========== 答辩话术润色接口 ==========
+
+class PolishRequest(BaseModel):
+    session_id: str
+    api_key: str = ""
+    preset: str = ""
+
+
+@app.post("/polish")
+def polish_answers(req: PolishRequest):
+    """
+    答辩话术润色：对学生的每个回答进行AI改写优化。
+    返回原始回答 vs 润色后回答的对比。
+    """
+    judge, _, _ = _get_engine(req.api_key, req.preset)
+    session = judge.get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, f"会话不存在: {req.session_id}")
+
+    results = []
+    for t in session.turns:
+        if not t.answer:
+            continue
+        polished = _polish_single(judge.llm, t.question, t.answer)
+        item = {
+            "round": t.turn_id,
+            "question": t.question,
+            "original": t.answer,
+            "polished": polished,
+        }
+        for i, fq in enumerate(t.followup_questions):
+            fa = t.followup_answers[i] if i < len(t.followup_answers) else ""
+            if fa:
+                pf = _polish_single(judge.llm, fq, fa)
+                item.setdefault("followups", []).append({
+                    "question": fq,
+                    "original": fa,
+                    "polished": pf,
+                })
+        results.append(item)
+
+    return {"results": results, "total": len(results)}
+
+
+def _polish_single(llm: LLMClient, question: str, answer: str) -> str:
+    """润色单条答辩回答"""
+    prompt = (
+        f"你是答辩话术优化专家。请将以下学生的答辩回答润色为更专业、更流畅的版本。\n"
+        f"要求：\n"
+        f"- 保持原意不变，不添加新信息\n"
+        f"- 提升表达的专业性和逻辑性\n"
+        f"- 去除口语化表达、重复和冗余\n"
+        f"- 使回答更紧凑有力，适合正式答辩场合\n"
+        f"- 直接输出润色后的回答，不要加任何解释或前缀\n\n"
+        f"评委问题：{question}\n"
+        f"学生原始回答：{answer}\n\n"
+        f"润色后回答："
+    )
+    try:
+        resp = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1024)
+        return resp.content.strip()
+    except Exception:
+        return answer

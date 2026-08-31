@@ -123,6 +123,7 @@ body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text)
 
   <!-- 控制栏 -->
   <div class="controls">
+    <span id="timerDisplay" style="color:var(--green);font-weight:600;font-size:1rem;min-width:70px;display:none">⏱ 03:00</span>
     <button class="ctrl-btn ctrl-btn-secondary" onclick="toggleCamera()" id="camBtn">📷 摄像头</button>
     <button class="mic-btn idle" onclick="toggleMic()" id="micBtn">🎤</button>
     <button class="ctrl-btn ctrl-btn-primary" onclick="submitAnswer()" id="submitBtn">提交回答</button>
@@ -163,7 +164,13 @@ body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text)
       </div>
     </div>
     <div class="result-footer">
+      <button class="ctrl-btn ctrl-btn-secondary" onclick="polishAnswers()" style="font-size:1rem;padding:12px 24px">✨ 话术润色</button>
+      <button class="ctrl-btn ctrl-btn-secondary" onclick="exportPDF()" style="font-size:1rem;padding:12px 24px">📄 导出PDF</button>
       <button class="ctrl-btn ctrl-btn-primary" onclick="location.reload()" style="font-size:1rem;padding:12px 32px">开始新答辩</button>
+    </div>
+    <div id="polishArea" style="padding:0 30px 20px;display:none">
+      <h3 style="color:var(--accent);margin-bottom:12px">✨ 答辩话术润色</h3>
+      <div id="polishContent"></div>
     </div>
   </div>
 </div>
@@ -182,6 +189,9 @@ body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text)
     </select>
     <label>提问轮数</label>
     <select id="maxTurns"><option value="3">3轮</option><option value="5" selected>5轮</option><option value="8">8轮</option></select>
+    <label>每轮限时</label>
+    <select id="timeLimit"><option value="120">2分钟</option><option value="180" selected>3分钟</option><option value="300">5分钟</option></select>
+    <label><input type="checkbox" id="recordToggle" checked> 全程录制存档（摄像头+语音）</label>
     <label>项目材料（粘贴或拖拽上传）</label>
     <div id="dropZone" style="border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;color:var(--dim);cursor:pointer;margin-bottom:8px;transition:border-color .2s" onclick="document.getElementById('fileInput').click()">
       📁 点击或拖拽上传 docx/pdf
@@ -199,6 +209,8 @@ body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text)
 <script>
 let sessionId='',turnCount=0,maxT=5;
 let isRecording=false;
+let timeLimit=180,timerInterval=null,timerSeconds=0;
+let recordToggle=false,videoRecorder=null,videoChunks=[],recordedBlob=null;
 let cameraStream=null;
 let avatarAvailable=false;
 let finalAnswer='';
@@ -280,6 +292,8 @@ async function startVideoDefense(){
   if(!pt){alert('请输入项目材料');return;}
   const persona=document.getElementById('persona').value;
   const mt=parseInt(document.getElementById('maxTurns').value);
+  timeLimit=parseInt(document.getElementById('timeLimit').value);
+  recordToggle=document.getElementById('recordToggle').checked;
   document.getElementById('startBtn').disabled=true;document.getElementById('startBtn').textContent='启动中...';
   try{
     const r=await api('/start',{persona,scenario:'大创立项',project_text:pt,max_turns:mt});
@@ -289,6 +303,8 @@ async function startVideoDefense(){
     addMsg('sys','答辩开始 — '+r.persona+' · 共'+mt+'轮');
     addMsg('judge',r.question);
     speak(r.question);
+    startTimer();
+    if(recordToggle)startVideoRecord();
   }catch(e){alert('启动失败: '+e.message);}
   document.getElementById('startBtn').disabled=false;document.getElementById('startBtn').textContent='开始视频答辩';
 }
@@ -299,11 +315,13 @@ function stopMic(){isRecording=false;document.getElementById('micBtn').className
 
 async function toggleCamera(){if(cameraStream){cameraStream.getTracks().forEach(t=>t.stop());cameraStream=null;document.getElementById('webcamBox').innerHTML='点击下方开启摄像头';document.getElementById('camBtn').textContent='📷 摄像头';return;}try{cameraStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});const v=document.createElement('video');v.srcObject=cameraStream;v.autoplay=true;v.muted=true;document.getElementById('webcamBox').innerHTML='';document.getElementById('webcamBox').appendChild(v);document.getElementById('camBtn').textContent='📷 关闭摄像头';}catch(e){alert('无法访问摄像头: '+e.message);}}
 
-async function submitAnswer(){if(isRecording){alert('请先点⏹停止录音，等识别出文字后再提交');return;}const ans=finalAnswer.trim();if(!ans){alert('请先录音或输入回答');return;}document.getElementById('submitBtn').disabled=true;addMsg('student',ans);finalAnswer='';document.getElementById('voiceText').textContent='';try{const r=await api('/answer',{session_id:sessionId,answer:ans});if(r.type==='followup'){addMsg('judge',r.question);speak(r.question);}else if(r.type==='new_question'){turnCount++;addMsg('sys','—— 第'+turnCount+'轮 ——');addMsg('judge',r.question);speak(r.question);}else if(r.type==='finished'){addMsg('sys','答辩结束');await doEvaluate();}}catch(e){alert('提交失败: '+e.message);}document.getElementById('submitBtn').disabled=false;}
+async function submitAnswer(){if(isRecording){alert('请先点⏹停止录音，等识别出文字后再提交');return;}const ans=finalAnswer.trim();if(!ans){alert('请先录音或输入回答');return;}document.getElementById('submitBtn').disabled=true;stopTimer();addMsg('student',ans);finalAnswer='';document.getElementById('voiceText').textContent='';try{const r=await api('/answer',{session_id:sessionId,answer:ans});if(r.type==='followup'){addMsg('judge',r.question);speak(r.question);startTimer();}else if(r.type==='new_question'){turnCount++;addMsg('sys','—— 第'+turnCount+'轮 ——');addMsg('judge',r.question);speak(r.question);startTimer();}else if(r.type==='finished'){addMsg('sys','答辩结束');await doEvaluate();}}catch(e){alert('提交失败: '+e.message);}document.getElementById('submitBtn').disabled=false;}
 
 async function doEvaluate(){
   document.getElementById('avatarStatus').textContent='评委评审中...';
   addMsg('sys','正在生成评审报告...');
+  stopTimer();
+  stopVideoRecord();
   try{
     const r=await api('/evaluate',{session_id:sessionId});
     const ev=r.evaluation;
@@ -340,10 +358,84 @@ async function doEvaluate(){
     }
 
     document.getElementById('resultOverlay').classList.add('show');
+    // 录制回放下载
+    if(window._recordedUrl){
+      const footer=document.querySelector('.result-footer');
+      const dl=document.createElement('button');
+      dl.className='ctrl-btn ctrl-btn-secondary';dl.style.cssText='font-size:1rem;padding:12px 24px';
+      dl.textContent='📹 下载答辩录像';
+      dl.onclick=()=>{const a=document.createElement('a');a.href=window._recordedUrl;a.download='答辩录像_'+new Date().toISOString().slice(0,19)+'.webm';a.click();};
+      footer.insertBefore(dl,footer.firstChild);
+    }
   }catch(e){alert('评审失败: '+e.message);}
 }
 
-async function endDefense(){if(!confirm('确定结束答辩？'))return;if(isRecording)stopMic();addMsg('sys','学生主动结束');await doEvaluate();}
+async function endDefense(){if(!confirm('确定结束答辩？'))return;if(isRecording)stopMic();stopTimer();addMsg('sys','学生主动结束');await doEvaluate();}
+
+// ========== 计时器 ==========
+function startTimer(){stopTimer();timerSeconds=timeLimit;const d=document.getElementById('timerDisplay');d.style.display='inline';d.style.color='var(--green)';updTimer();timerInterval=setInterval(()=>{timerSeconds--;updTimer();if(timerSeconds<=0){stopTimer();alert('⏰ 时间到！请尽快提交回答。');}else if(timerSeconds===30)d.style.color='var(--yellow)';else if(timerSeconds===10)d.style.color='var(--red)';},1000);}
+function stopTimer(){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}document.getElementById('timerDisplay').style.display='none';}
+function updTimer(){const m=Math.floor(timerSeconds/60).toString().padStart(2,'0');const s=(timerSeconds%60).toString().padStart(2,'0');document.getElementById('timerDisplay').textContent='⏱ '+m+':'+s;}
+
+// ========== 全程录制存档 ==========
+async function startVideoRecord(){
+  videoChunks=[];
+  try{
+    let stream=cameraStream;
+    if(!stream){
+      try{stream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});}catch(e){return;}
+    }
+    const tracks=[...stream.getTracks()];
+    if(!stream.getAudioTracks().length){
+      try{const as=await navigator.mediaDevices.getUserMedia({audio:true});tracks.push(...as.getAudioTracks());}catch(e){}
+    }
+    const comb=new MediaStream(tracks);
+    const mr=new MediaRecorder(comb,{mimeType:'video/webm;codecs=vp8,opus'});
+    mr.ondataavailable=e=>{if(e.data.size>0)videoChunks.push(e.data);};
+    mr.onstop=()=>{
+      recordedBlob=new Blob(videoChunks,{type:'video/webm'});
+      window._recordedUrl=URL.createObjectURL(recordedBlob);
+      addMsg('sys','📹 全程录制已保存，答辩结束后可下载回放');
+    };
+    mr.start();
+    videoRecorder=mr;
+  }catch(e){console.warn('录制启动失败:',e);}
+}
+function stopVideoRecord(){if(videoRecorder&&videoRecorder.state!=='inactive'){videoRecorder.stop();videoRecorder=null;}}
+
+// ========== 答辩话术润色 ==========
+async function polishAnswers(){
+  const area=document.getElementById('polishArea');
+  const content=document.getElementById('polishContent');
+  area.style.display='block';
+  content.innerHTML='<div style="color:var(--dim);text-align:center;padding:20px">正在润色...</div>';
+  try{
+    const res=await api('/polish',{session_id:sessionId});
+    let html='';
+    res.results.forEach(r=>{
+      html+=`<div style="margin-bottom:16px;padding:12px;background:var(--bg);border-radius:8px">
+        <div style="font-weight:600;color:var(--accent);margin-bottom:8px">第${r.round}轮</div>
+        <div style="color:var(--dim);font-size:0.85rem;margin-bottom:8px">📌 ${r.question}</div>
+        <div style="margin-bottom:8px"><span style="color:var(--red);font-size:0.8rem">原始：</span><br><span style="color:var(--dim)">${r.original}</span></div>
+        <div><span style="color:var(--green);font-size:0.8rem">✨ 润色：</span><br><span style="color:var(--text)">${r.polished}</span></div></div>`;
+    });
+    content.innerHTML=html||'<p style="color:var(--dim)">暂无回答可润色</p>';
+  }catch(e){content.innerHTML='<p style="color:var(--red)">润色失败: '+e.message+'</p>';}
+}
+
+// ========== 导出PDF ==========
+async function exportPDF(){
+  const w=window.open('', '_blank');
+  if(!w){alert('请允许弹出窗口以导出PDF');return;}
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>答辩报告</title><style>body{font-family:sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}h1{color:#1e3a5f}h2{color:#38bdf8;border-bottom:2px solid #38bdf8;padding-bottom:4px}.qa{margin:12px 0;padding:10px;background:#f5f5f5;border-radius:8px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}</style></head><body><h1>AI模拟答辩报告</h1><p>生成时间: '+new Date().toLocaleString()+'</p>');
+  try{
+    const sess=await fetch('/session/'+sessionId).then(r=>r.json());
+    w.document.write('<h2>答辩记录</h2>');
+    sess.turns.forEach(t=>{w.document.write('<div class="qa"><strong>第'+t.轮次+'轮 评委：</strong>'+t.问题+'<br><strong>学生：</strong>'+t.回答+'</div>');t.追问.forEach((fq,i)=>{w.document.write('<div class="qa"><strong>追问：</strong>'+fq+'<br><strong>回答：</strong>'+(t.追问回答[i]||'')+'</div>');});});
+    if(sess.evaluation){const ev=sess.evaluation;w.document.write('<h2>评审结果</h2><p style="font-size:1.5rem;font-weight:bold">总分: '+ev.总分.toFixed(1)+'/100</p><table><tr><th>维度</th><th>分数</th></tr>');ev.各维度评分.forEach(s=>w.document.write('<tr><td>'+s.维度+'</td><td>'+s.分数.toFixed(1)+'</td></tr>'));w.document.write('</table>');if(ev.优势)w.document.write('<p><strong>优势：</strong>'+ev.优势.join('；')+'</p>');if(ev.不足)w.document.write('<p><strong>不足：</strong>'+ev.不足.join('；')+'</p>');if(ev.改进建议)w.document.write('<p><strong>改进建议：</strong><br>'+ev.改进建议.map((s,i)=>i+1+'. '+s).join('<br>')+'</p>');}
+  }catch(e){w.document.write('<p>加载失败: '+e.message+'</p>');}
+  w.document.write('</body></html>');w.document.close();setTimeout(()=>w.print(),500);
+}
 
 // 检查数字人
 fetch('/avatar/check',{method:'POST'}).then(r=>r.json()).then(d=>{avatarAvailable=d.available;document.getElementById('avatarInfo').textContent=d.available?'✓ D-ID数字人已配置':'💡 当前使用免费动画数字人 | 接D-ID可获真人嘴型同步: studio.d-id.com';});
