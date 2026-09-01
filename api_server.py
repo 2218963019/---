@@ -563,3 +563,80 @@ def _polish_single(llm: LLMClient, question: str, answer: str) -> str:
         return resp.content.strip()
     except Exception:
         return answer
+
+
+# ========== AI自由问答接口 ==========
+
+import hashlib as _hashlib
+
+_ask_rag_cache: dict = {}
+
+
+class AskRequest(BaseModel):
+    question: str
+    project_text: str = ""
+    history: list = []
+    api_key: str = ""
+    preset: str = ""
+
+
+@app.post("/api/ask")
+def ai_free_ask(req: AskRequest):
+    """
+    AI自由问答：学生可提问任何专业问题，类似DeepSeek对话。
+    可选传入项目材料，系统会用RAG检索相关片段作为上下文，让回答更有针对性。
+    支持多轮对话（传入history）。
+    """
+    if not req.question.strip():
+        raise HTTPException(400, "请输入问题")
+
+    judge, _, rag = _get_engine(req.api_key, req.preset)
+    llm = judge.llm
+
+    context = ""
+    if req.project_text.strip():
+        cache_key = _hashlib.md5(req.project_text.encode()).hexdigest()[:16]
+        if cache_key not in _ask_rag_cache:
+            tmp_rag = RAGEngine(chunk_size=400)
+            try:
+                tmp_rag.index_text(req.project_text, source="user_project")
+                _ask_rag_cache[cache_key] = tmp_rag
+            except Exception:
+                _ask_rag_cache[cache_key] = None
+        cached_rag = _ask_rag_cache.get(cache_key)
+        if cached_rag:
+            try:
+                context = cached_rag.retrieve_with_context(req.question, top_k=3, min_score=0.01)
+            except Exception:
+                context = ""
+
+    system_prompt = (
+        "你是一个专业的AI学术助手，擅长回答各类专业问题，包括但不限于：\n"
+        "- 技术原理与实现方案\n"
+        "- 项目管理与申报书撰写\n"
+        "- 学术写作与研究方法\n"
+        "- 行业趋势与前沿动态\n"
+        "- 数据分析与算法设计\n\n"
+        "回答要求：\n"
+        "- 条理清晰，重点突出\n"
+        "- 如果问题涉及用户的的项目材料，请结合材料内容回答\n"
+        "- 适当使用分点或分段提升可读性\n"
+        "- 如果不确定，诚实说明而非编造\n"
+    )
+    if context and "未检索到" not in context:
+        system_prompt += f"\n以下是用户项目材料中与问题相关的内容：\n{context}\n"
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for h in (req.history or [])[-10:]:
+        role = h.get("role", "user")
+        content = h.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": req.question})
+
+    try:
+        resp = llm.chat(messages, temperature=0.7, max_tokens=2048)
+        answer = resp.content.strip()
+        return {"answer": answer, "has_context": bool(context and "未检索到" not in context)}
+    except Exception as e:
+        raise HTTPException(500, f"AI回答失败: {str(e)}")
